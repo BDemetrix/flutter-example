@@ -7,6 +7,12 @@
 
 ---
 
+## 📥 Скачать APK
+
+**Релизная версия:** [flutter-example-release.apk](apk/flutter-example-release.apk)
+
+---
+
 ## 📁 Структура проекта
 
 ```
