@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter_example/domain/errors/domain_error.dart';
+import 'package:flutter_example/domain/entities/operation/operation.dart';
+import 'package:flutter_example/data/mappers/operation_mapper.dart';
 import 'package:flutter_example/data/providers/websocket/i_websocket_provider.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:injectable/injectable.dart';
@@ -161,32 +163,32 @@ class AppWsProvider implements IWebSocketProvider<String> {
       });
     });
 
-    // +500ms → DATAEX DataType=11, Operation=0 (users)
+    // +500ms → DATAEX DataType=11, Operation=initialize (users)
     Future.delayed(const Duration(milliseconds: 1700), () {
       _emit({
         "MessageID": "DATAEX",
         "DataType": 11,
-        "Operation": 0,
+        "Operation": OperationMapper.toCode(Operation.initialize),
         "DataObjects": _users,
       });
     });
 
-    // +200ms → DATAEX DataType=10, Operation=0 (devices)
+    // +200ms → DATAEX DataType=10, Operation=initialize (devices)
     Future.delayed(const Duration(milliseconds: 1900), () {
       _emit({
         "MessageID": "DATAEX",
         "DataType": 10,
-        "Operation": 0,
+        "Operation": OperationMapper.toCode(Operation.initialize),
         "DataObjects": _devices,
       });
     });
 
-    // +200ms → DATAEX DataType=12, Operation=0 (groups)
+    // +200ms → DATAEX DataType=12, Operation=initialize (groups)
     Future.delayed(const Duration(milliseconds: 2100), () {
       _emit({
         "MessageID": "DATAEX",
         "DataType": 12,
-        "Operation": 0,
+        "Operation": OperationMapper.toCode(Operation.initialize),
         "DataObjects": _groups,
       });
     });
@@ -239,8 +241,14 @@ class AppWsProvider implements IWebSocketProvider<String> {
 
     Map<String, dynamic> data;
 
-    // Operation: 1 = add all, 2 = change selected, 3 = remove selected
-    final operation = [1, 2, 3][random.nextInt(3)];
+    // Operation codes must match OperationMapper:
+    // 0 = initialize, 1 = add, 2 = remove, 3 = change
+    final operationCodes = [
+      OperationMapper.toCode(Operation.add),
+      OperationMapper.toCode(Operation.remove),
+      OperationMapper.toCode(Operation.change),
+    ];
+    final operation = operationCodes[random.nextInt(operationCodes.length)];
 
     switch (operation) {
       case 1: // add - add all entities from mocks
@@ -260,13 +268,33 @@ class AppWsProvider implements IWebSocketProvider<String> {
         data = {
           "MessageID": "DATAEX",
           "DataType": dataType,
-          "Operation": 1,
+          "Operation": operation,
           "DataObjects": newItems,
         };
         _talker.debug('Mock WS: Added ${newItems.length} items to DataType=$dataType');
         break;
 
-      case 2: // change - modify names of selected entities randomly
+      case 2: // remove - remove selected entities by ID (OperationMapper: 2 = remove)
+        final removedIds = <String>[];
+        for (final item in selectedForOperation) {
+          final removedId = item[idField] as String;
+          targetList.removeWhere((e) => e[idField] == removedId);
+          removedIds.add(removedId);
+        }
+
+        // For remove operation, send objects with only the ID field
+        final removeData = removedIds.map((id) => <String, dynamic>{idField: id}).toList();
+
+        data = {
+          "MessageID": "DATAEX",
+          "DataType": dataType,
+          "Operation": operation,
+          "DataObjects": removeData,
+        };
+        _talker.debug('Mock WS: Removed ${removedIds.length} items from DataType=$dataType');
+        break;
+
+      case 3: // change - modify names of selected entities randomly (OperationMapper: 3 = change)
         final changedItems = <Map<String, dynamic>>[];
         for (final item in selectedForOperation) {
           switch (dataType) {
@@ -320,30 +348,10 @@ class AppWsProvider implements IWebSocketProvider<String> {
         data = {
           "MessageID": "DATAEX",
           "DataType": dataType,
-          "Operation": 2,
+          "Operation": operation,
           "DataObjects": changedItems,
         };
         _talker.debug('Mock WS: Changed ${changedItems.length} items in DataType=$dataType');
-        break;
-
-      case 3: // remove - remove selected entities by ID
-        final removedIds = <String>[];
-        for (final item in selectedForOperation) {
-          final removedId = item[idField] as String;
-          targetList.removeWhere((e) => e[idField] == removedId);
-          removedIds.add(removedId);
-        }
-
-        // For remove operation, send objects with only the ID field
-        final removeData = removedIds.map((id) => <String, dynamic>{idField: id}).toList();
-
-        data = {
-          "MessageID": "DATAEX",
-          "DataType": dataType,
-          "Operation": 3,
-          "DataObjects": removeData,
-        };
-        _talker.debug('Mock WS: Removed ${removedIds.length} items from DataType=$dataType');
         break;
 
       default:
