@@ -48,11 +48,16 @@ class AppWsProvider implements IWebSocketProvider<String> {
   String? _serverUri;
   bool _loggedIn = false;
   Timer? _periodicTimer;
-  
+
   // Mock data storage
   final List<Map<String, dynamic>> _users = [];
   final List<Map<String, dynamic>> _devices = [];
   final List<Map<String, dynamic>> _groups = [];
+
+  // Backup initial data for re-initialization
+  final List<Map<String, dynamic>> _initialUsers = [];
+  final List<Map<String, dynamic>> _initialDevices = [];
+  final List<Map<String, dynamic>> _initialGroups = [];
 
   @override
   String? get serverUri => _serverUri;
@@ -69,13 +74,13 @@ class AppWsProvider implements IWebSocketProvider<String> {
     _talker.debug('Mock WS login to: $serverUri');
     _serverUri = serverUri;
     _loggedIn = true;
-    
+
     // Initialize mock data
     _initMockData();
-    
+
     // Emulate handshake sequence
     _emulateHandshake();
-    
+
     return const Right(null);
   }
 
@@ -112,8 +117,9 @@ class AppWsProvider implements IWebSocketProvider<String> {
       {"ID":"7qzWhQoDgPYOu1IehTfVFg==","Type":0,"Login":"1008","Name":"Quinn Frost Jones","Locked":false},
       {"ID":"hdtgyy8Vqk+A+EhUkGOS+Q==","Type":1,"Login":"dispatcher01","Name":"Skyler Raven Martinez","Locked":false},
       {"ID":"NZsD8s6F1kiD6u0G0RTJOA==","Type":1,"Login":"dispatcher02","Name":"Dakota \"Wolf\" Hernandez","Locked":false},
-      {"ID":"EREREREREREREREREREREQ==","Type":1,"Login":"admin","Name":"Phoenix \"The Chief\" Lopez","Locked":false},
+      {"ID":"EREREREREREREREREREREREQ==","Type":1,"Login":"admin","Name":"Phoenix \"The Chief\" Lopez","Locked":false},
     ]);
+    _initialUsers.addAll(_users);
 
     // Initial devices (DataType=10) - UserID must exist in _users, Login/UserName must match user data
     _devices.addAll([
@@ -122,6 +128,7 @@ class AppWsProvider implements IWebSocketProvider<String> {
       {"ID":"LlPbPalS5u8LxqSqWqU9dA==","Type":0,"UserID":"rk5/SsxY8pRHTeVQEBMKNA==","StatusID":"BDT+fA5XEESnIxCTH6+8Tw==","Login":"1003","UserName":"Taylor Phoenix Williams","DeviceDescription":"MANUFACTURER=TEST;MODEL=DEVICE_C;SERIAL=000003;OSVERSION=15","AvatarHash":"","VersionName":"1.0.0"},
       {"ID":"lPbPa5u8LxqSыаыqWqU9dA==","Type":0,"UserID":"S99UDAAm2erl1IL91MvhmA==","StatusID":"BDT+fA5XEESnIxCTH+8Tw==","Login":"1004","UserName":"Morgan \"Night Owl\" Johnson","DeviceDescription":"MANUFACTURER=TEST;MODEL=DEVICE_C;SERIAL=000003;OSVERSION=15","AvatarHash":"","VersionName":"1.0.0"},
     ]);
+    _initialDevices.addAll(_devices);
 
     // Initial groups (DataType=12)
     _groups.addAll([
@@ -132,6 +139,48 @@ class AppWsProvider implements IWebSocketProvider<String> {
       {"ID":"QzM4UBPA2XWm7yImYVKTPA==","Type":1,"Name":"Rapid Response Unit","Priority":0,"Emergency":0,"AllCall":0,"Broadcast":0,"Echo":0},
       {"ID":"8dBU4zS3JALUPg0pfv30+A==","Type":1,"Name":"Night Shift Ops","Priority":0,"Emergency":0,"AllCall":0,"Broadcast":0,"Echo":0},
     ]);
+    _initialGroups.addAll(_groups);
+  }
+
+  /// Re-initialize data by sending Operation.initialize with initial mock data
+  void _reinitializeData() {
+    _talker.debug('Mock WS: Re-initializing data (lists became empty)');
+    
+    // Reset current lists to initial state
+    _users.clear();
+    _users.addAll(_initialUsers);
+    _devices.clear();
+    _devices.addAll(_initialDevices);
+    _groups.clear();
+    _groups.addAll(_initialGroups);
+
+    // Send initialize operations for all data types
+    Future.delayed(Duration.zero, () {
+      _emit({
+        "MessageID": "DATAEX",
+        "DataType": 11,
+        "Operation": OperationMapper.toCode(Operation.initialize),
+        "DataObjects": List<Map<String, dynamic>>.from(_initialUsers),
+      });
+    });
+    
+    Future.delayed(const Duration(milliseconds: 100), () {
+      _emit({
+        "MessageID": "DATAEX",
+        "DataType": 10,
+        "Operation": OperationMapper.toCode(Operation.initialize),
+        "DataObjects": List<Map<String, dynamic>>.from(_initialDevices),
+      });
+    });
+    
+    Future.delayed(const Duration(milliseconds: 200), () {
+      _emit({
+        "MessageID": "DATAEX",
+        "DataType": 12,
+        "Operation": OperationMapper.toCode(Operation.initialize),
+        "DataObjects": List<Map<String, dynamic>>.from(_initialGroups),
+      });
+    });
   }
 
   void _emulateHandshake() {
@@ -147,7 +196,7 @@ class AppWsProvider implements IWebSocketProvider<String> {
 
     // +300ms → LOGIN_RESPONSE
     Future.delayed(const Duration(milliseconds: 900), () {
-      _emit({"MessageID": "LOGIN_RESPONSE", "Response": 0, "UserID": "EREREREREREREREREREREQ=="});
+      _emit({"MessageID": "LOGIN_RESPONSE", "Response": 0, "UserID": "EREREREREREREREREREREREQ=="});
     });
 
     // +300ms → DEVICE_CONTEXT
@@ -155,7 +204,7 @@ class AppWsProvider implements IWebSocketProvider<String> {
       _emit({
         "MessageID": "DEVICE_CONTEXT",
         "PingTimeout": 30000,
-        "UserID": "EREREREREREREREREREREQ==",
+        "UserID": "EREREREREREREREREREREREREQ==",
         "VideoResolution": 0,
         "NetworkName": "",
         "NetworkGlobalID": "",
@@ -200,8 +249,6 @@ class AppWsProvider implements IWebSocketProvider<String> {
   }
 
   void _startPeriodicUpdates() {
-    // final random = Random();
-    // final seconds = random.nextInt(3) + 2; // Random 2, 3, or 4 seconds
     _periodicTimer = Timer.periodic(Duration(milliseconds: 333), (_) {
       _emitRandomOperation();
     });
@@ -231,7 +278,11 @@ class AppWsProvider implements IWebSocketProvider<String> {
         return;
     }
 
-    if (targetList.isEmpty) return;
+    // Check if target list is empty or too small - reinitialize if needed
+    if (targetList.isEmpty) {
+      _reinitializeData();
+      return;
+    }
 
     // Select random entities (no more than half) for operations
     final maxToRemoveOrChange = (targetList.length / 2).ceil();
@@ -364,14 +415,14 @@ class AppWsProvider implements IWebSocketProvider<String> {
   Map<String, dynamic> _createMockItem(int dataType, String id) {
     final random = Random();
     final num = random.nextInt(1000);
-    
+
     switch (dataType) {
       case 11: // user
         final firstName = _firstNames[random.nextInt(_firstNames.length)];
         final lastName = _lastNames[random.nextInt(_lastNames.length)];
         final nickname = _nicknames[random.nextInt(_nicknames.length)];
         final nameStyle = random.nextInt(3);
-        
+
         String displayName;
         switch (nameStyle) {
           case 0:
@@ -383,7 +434,7 @@ class AppWsProvider implements IWebSocketProvider<String> {
           default:
             displayName = '$firstName $nickname';
         }
-        
+
         return {
           "ID": id,
           "Type": 0,
